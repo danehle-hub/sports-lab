@@ -1,0 +1,8 @@
+key,label,value,min,max,step,help
+meta_blend,Shrink factor (0..1): higher = more aggressive,0.6,0.0,1.0,,
+w_trench,Weight: Trench,0.99,0.0,2.0,,
+w_qb,Weight: QB,0.3,0.0,2.0,,
+w_rest,Weight: Rest/Schedule,0.15,0.0,2.0,,
+w_travel,Weight: Travel/Body clock,0.05,0.0,2.0,,
+w_hfa,Weight: Home-field,1.0,0.0,2.0,,
+w_inj_cluster,Weight: Injury clusters,0.05,0.0,2.0,,

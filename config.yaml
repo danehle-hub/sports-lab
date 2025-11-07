@@ -1,0 +1,36 @@
+# Global knobs (UI will override if using Streamlit tables)
+ats_sigma: 13.5
+kelly_fraction: 0.25
+max_units: 3.0
+default_spread_price: -110
+
+# Component weights (sum is auto-normalized)
+weights:
+  w_trench: 0.40
+  w_qb:     0.30
+  w_rest:   0.15
+  w_travel: 0.05
+  w_hfa:    0.05
+  w_inj_cluster: 0.05
+  meta_blend: 0.55
+
+# Tier thresholds
+tiers:
+  strong_ev_threshold: 0.03
+  strong_pts_threshold: 3.0
+  lean_ev_threshold: 0.015
+  lean_pts_threshold: 1.5
+
+# Backtest
+backtest:
+  start_season: 2019
+  end_season: 2024
+  juice: -110
+  kelly_fraction: 0.25
+  bankroll_units: 100.0
+
+# Simulation
+simulation:
+  n_paths: 2000
+  bankroll_units: 100.0
+  kelly_fraction: 0.25

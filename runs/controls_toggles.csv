@@ -1,0 +1,4 @@
+key,label,value,help
+enable_unit_floors,Enforce unit floors by tier,True,
+use_ev,Use EV for tiering,True,
+use_points,Use value_pts for tiering,True,

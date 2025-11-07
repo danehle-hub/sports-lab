@@ -1,0 +1,29 @@
+game_id,commence_time,team_home,team_away,spread_home,market_home_spread_price,market_away_spread_price,market_home_ml,market_away_ml
+0ae85bbc3711ad0cb94475a40e2364f0,2025-11-16T18:00:00Z,Atlanta Falcons,Carolina Panthers,-3.5,-105.0,-115.0,-180.0,150.0
+21f47a328fb2ab65c01360a7a2bd9571,2025-11-09T18:00:00Z,Carolina Panthers,New Orleans Saints,-5.5,-108.0,-112.0,-245.0,200.0
+229a5e9ce60dcb344a8cc3c97121154e,2025-11-16T18:00:00Z,Minnesota Vikings,Chicago Bears,-3.0,-105.0,-115.0,-162.0,136.0
+265f0188945bb81ec64751571eb724cb,2025-11-16T14:30:00Z,Miami Dolphins,Washington Commanders,1.5,-110.0,-110.0,105.0,-125.0
+2710103fe4fb0170ae03b4e34bde8132,2025-11-09T21:25:00Z,San Francisco 49ers,Los Angeles Rams,4.5,-108.0,-112.0,185.0,-225.0
+32ec2bd4ac9e4c40f9f5cbed7e67f837,2025-11-14T01:15:00Z,New England Patriots,New York Jets,-10.5,-115.0,-105.0,-575.0,425.0
+349d53a4f89591312ea528e81b786474,2025-11-10T01:20:00Z,Los Angeles Chargers,Pittsburgh Steelers,-3.0,-105.0,-115.0,-162.0,136.0
+39e7c1f6e36d5bc4d2613ebf7bb83c10,2025-11-09T18:00:00Z,Tampa Bay Buccaneers,New England Patriots,-2.5,-110.0,-110.0,-142.0,120.0
+3b1a97366685a96e6e1940ae56cc4d31,2025-11-09T18:00:00Z,Chicago Bears,New York Giants,-4.5,-110.0,-110.0,-218.0,180.0
+3c10bc18680995136017c3bfd3152334,2025-11-09T18:00:00Z,Miami Dolphins,Buffalo Bills,9.5,-108.0,-112.0,400.0,-535.0
+42473c1ddf8f424069ff3f264dd8dca4,2025-11-09T14:30:00Z,Indianapolis Colts,Atlanta Falcons,-6.5,-108.0,-112.0,-305.0,245.0
+438868ff90501a1fe9a0fbecbee9dc12,2025-11-11T01:15:00Z,Green Bay Packers,Philadelphia Eagles,-1.5,-108.0,-112.0,-122.0,102.0
+591fd7cff37201a14cbdfbd457592445,2025-11-16T18:00:00Z,Jacksonville Jaguars,Los Angeles Chargers,1.5,-110.0,-110.0,105.0,-125.0
+5c06e82838fcfade9adf1e89b8bd3081,2025-11-16T18:00:00Z,New York Giants,Green Bay Packers,7.0,-110.0,-110.0,250.0,-310.0
+6d209e0e637f3b116ec958e0634f2a02,2025-11-17T01:20:00Z,Philadelphia Eagles,Detroit Lions,-1.5,-110.0,-110.0,-125.0,105.0
+7147476b5d96c0ee874b838de3910ee3,2025-11-16T18:00:00Z,Pittsburgh Steelers,Cincinnati Bengals,-5.5,-112.0,-108.0,-245.0,200.0
+740b843794cc89176c4ffe38b66d30d9,2025-11-09T21:05:00Z,Seattle Seahawks,Arizona Cardinals,-6.5,-120.0,100.0,-310.0,250.0
+80d04ba917883a6438580ebae9fb0f22,2025-11-18T01:15:00Z,Las Vegas Raiders,Dallas Cowboys,3.0,-105.0,-115.0,142.0,-170.0
+844b89333f293f055f8e0c147fb9fec5,2025-11-09T18:00:00Z,New York Jets,Cleveland Browns,1.5,-105.0,-115.0,110.0,-130.0
+91630b9c62640117918fa30d2a62d2db,2025-11-16T21:05:00Z,Arizona Cardinals,San Francisco 49ers,1.5,-110.0,-110.0,105.0,-125.0
+93365f943b3aa23705bc9e1c7b47d7f8,2025-11-09T21:25:00Z,Washington Commanders,Detroit Lions,8.5,-108.0,-112.0,360.0,-470.0
+96377d2fb55e3cef733cecccdecaed5f,2025-11-16T18:00:00Z,Buffalo Bills,Tampa Bay Buccaneers,-6.0,-110.0,-110.0,-265.0,215.0
+96ce7785b0980b03282c7e10d4c58d4a,2025-11-16T21:25:00Z,Denver Broncos,Kansas City Chiefs,3.0,100.0,-120.0,142.0,-170.0
+9900b89c4776c5b47dd26ca4c755edf9,2025-11-09T18:00:00Z,Minnesota Vikings,Baltimore Ravens,3.5,-105.0,-115.0,185.0,-225.0
+9dbf94f23521c7cae7fd89b2d33fc3bd,2025-11-09T18:00:00Z,Houston Texans,Jacksonville Jaguars,1.5,-120.0,100.0,-105.0,-115.0
+cc60225b5a907bd9ba7c27c23131fc5c,2025-11-16T21:25:00Z,Cleveland Browns,Baltimore Ravens,7.5,-105.0,-115.0,300.0,-380.0
+e926e654cedeb65fcfcc389a5158ef4e,2025-11-16T21:05:00Z,Los Angeles Rams,Seattle Seahawks,-2.5,-110.0,-110.0,-142.0,120.0
+fd2f29289d6437a7c07d4780c5f04936,2025-11-16T18:00:00Z,Tennessee Titans,Houston Texans,7.5,-115.0,-105.0,270.0,-340.0
