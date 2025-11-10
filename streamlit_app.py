@@ -1,277 +1,352 @@
-# streamlit_app.py — FULL REPLACEMENT (toggles + sliders only)
+# streamlit_app.py — FULL REPLACEMENT (v2025-11-10e pass-through)
+# - Sliders saved to runs/controls_*.csv
+# - Run button calls python -m models.predict_upcoming_plus --fetch
+# - Pass-through if CSV is already the final 14-column export
+# - Otherwise, transform raw columns
+# - Strict column_config (no 6-dec drift)
 
 import sys
-import json
 import subprocess
 from pathlib import Path
-
-import streamlit as st
 import pandas as pd
+import numpy as np
+import streamlit as st
 
 # ---------------- Paths ----------------
-ROOT = Path(__file__).resolve().parent
-RUNS = ROOT / "runs"
-RUNS.mkdir(parents=True, exist_ok=True)
+APP_ROOT = Path(r"C:\Users\DanEhle\Documents\sports-lab")
+MODELS_DIR = APP_ROOT / "models"
+RUNS_DIR = APP_ROOT / "runs"
+RUNS_DIR.mkdir(parents=True, exist_ok=True)
 
-TOGGLES_CSV = RUNS / "controls_toggles.csv"
-THRESH_CSV  = RUNS / "controls_thresholds.csv"
-WEIGHTS_CSV = RUNS / "controls_weights.csv"
+PRED_CSV = RUNS_DIR / "upcoming_predictions_plus.csv"
+TOGGLES_CSV = RUNS_DIR / "controls_toggles.csv"
+THRESH_CSV  = RUNS_DIR / "controls_thresholds.csv"
+WEIGHTS_CSV = RUNS_DIR / "controls_weights.csv"
 
-PRED_FILE        = RUNS / "upcoming_predictions_plus.csv"
-BT_INPUT_CSV     = RUNS / "backtest_input.csv"
-BT_RESULTS_CSV   = RUNS / "backtest_results.csv"
-BT_SUMMARY_JSON  = RUNS / "backtest_summary.json"
+st.set_page_config(page_title="Sports Quant: NFL Model", layout="wide")
 
-# ---------------- Control schema ----------------
-TOGGLE_DEFS = [
-    ("enable_unit_floors", "Enforce unit floors by tier", True),
-    ("use_ev",             "Use EV for tiering",          True),
-    ("use_points",         "Use value_pts for tiering",   True),
+# ---------------- Utils ----------------
+REQUIRED_EXPORT_COLS = [
+    "Home Team","Away Team","Kickoff","Home Spread","Model Home Line","Home Cover %",
+    "Model Line (pts)","Edge (pts)","ATS EV (%)","Units","Pick Tier","Pick Team","Pick Price","Market Home ML",
 ]
 
-THRESH_DEFS = [
-    ("kelly_fraction",       "Kelly fraction",                    0.25,  (0.00, 1.00)),
-    ("max_units",            "Max units per play",                3.00,  (0.00, 10.00)),
-    ("default_spread_price", "Default spread price (American)",  -110.0, (-500.0, 500.0)),
-    ("strong_ev_threshold",  "STRONG EV threshold",               0.030, (0.000, 0.200)),
-    ("strong_pts_threshold", "STRONG points threshold",           3.0,   (0.0, 10.0)),
-    ("lean_ev_threshold",    "LEAN EV threshold",                 0.0125,(0.000, 0.200)),
-    ("lean_pts_threshold",   "LEAN points threshold",             1.5,   (0.0, 10.0)),
-    ("ats_sigma",            "ATS sigma (spread SD, pts)",       13.5,   (8.0, 20.0)),
-]
+def round_to_half(x):
+    if pd.isna(x):
+        return np.nan
+    try:
+        return np.round(float(x) * 2) / 2.0
+    except Exception:
+        return np.nan
 
-WEIGHT_DEFS = [
-    ("meta_blend",   "Shrink factor (0..1): higher = more aggressive", 0.60, (0.00, 1.00)),
-    ("w_trench",     "Weight: Trench",                                 0.40, (0.00, 2.00)),
-    ("w_qb",         "Weight: QB",                                     0.30, (0.00, 2.00)),
-    ("w_rest",       "Weight: Rest/Schedule",                          0.15, (0.00, 2.00)),
-    ("w_travel",     "Weight: Travel/Body clock",                      0.05, (0.00, 2.00)),
-    ("w_hfa",        "Weight: Home-field",                             0.05, (0.00, 2.00)),
-    ("w_inj_cluster","Weight: Injury clusters",                        0.05, (0.00, 2.00)),
-]
+def fmt_percentage_1dp(x):
+    if pd.isna(x):
+        return np.nan
+    try:
+        val = float(x)
+        return val * 100.0 if val <= 1.0 else val
+    except Exception:
+        return np.nan
 
-AGG_PRESETS = {
-    "Conservative": {
-        "weights":   {"meta_blend": 0.50},
-        "thresholds": {
-            "strong_pts_threshold": 3.5, "strong_ev_threshold": 0.035,
-            "lean_pts_threshold":   2.0, "lean_ev_threshold":   0.015,
-            "kelly_fraction":       0.20,
-        },
-    },
-    "Balanced": {
-        "weights":   {"meta_blend": 0.60},
-        "thresholds": {
-            "strong_pts_threshold": 3.0, "strong_ev_threshold": 0.030,
-            "lean_pts_threshold":   1.5, "lean_ev_threshold":   0.0125,
-            "kelly_fraction":       0.25,
-        },
-    },
-    "Aggressive": {
-        "weights":   {"meta_blend": 0.70},
-        "thresholds": {
-            "strong_pts_threshold": 2.5, "strong_ev_threshold": 0.025,
-            "lean_pts_threshold":   1.0, "lean_ev_threshold":   0.010,
-            "kelly_fraction":       0.30,
-        },
-    },
+def coerce_numeric(series):
+    return pd.to_numeric(series, errors="coerce")
+
+def parse_home_spread(row):
+    sh = row.get("spread_home", np.nan)
+    if pd.notna(sh):
+        try:
+            return float(sh)
+        except Exception:
+            pass
+    ml = row.get("market_line", None)
+    if isinstance(ml, str) and len(ml.strip()) > 0:
+        last = ml.strip().split()[-1]
+        try:
+            return float(last)
+        except Exception:
+            return np.nan
+    return np.nan
+
+def parse_kickoff(df: pd.DataFrame):
+    candidates = ["kickoff", "kickoff_dt", "kickoff_time", "game_time", "start_time", "commence_time"]
+    for c in candidates:
+        if c in df.columns:
+            return c
+    return None
+
+def series_or_default(df: pd.DataFrame, col: str, default_value):
+    if col in df.columns:
+        s = df[col]
+        if not isinstance(s, pd.Series):
+            return pd.Series([s] * len(df), index=df.index)
+        return s
+    return pd.Series([default_value] * len(df), index=df.index)
+
+@st.cache_data(show_spinner=False)
+def load_csv(path: Path) -> pd.DataFrame:
+    if not path.exists():
+        return pd.DataFrame()
+    return pd.read_csv(path)
+
+def build_display_df(raw: pd.DataFrame) -> pd.DataFrame:
+    if raw.empty:
+        return raw
+
+    # --- PASS-THROUGH: already in final 14-column format ---
+    if set(REQUIRED_EXPORT_COLS).issubset(set(raw.columns)):
+        out = raw[REQUIRED_EXPORT_COLS].copy()
+        # enforce numeric types and round (belt + suspenders)
+        for c in ["Home Spread","Model Home Line","Model Line (pts)"]:
+            out[c] = pd.to_numeric(out[c], errors="coerce").apply(round_to_half)
+        for c in ["Edge (pts)","ATS EV (%)","Units","Pick Price","Market Home ML","Home Cover %"]:
+            out[c] = pd.to_numeric(out[c], errors="coerce")
+        return out
+
+    # --- FALLBACK: transform from wide/raw model output ---
+    df = raw.copy()
+    df["Home Team"] = series_or_default(df, "team_home", "")
+    df["Away Team"] = series_or_default(df, "team_away", "")
+
+    kickoff_col = parse_kickoff(df)
+    if kickoff_col is None:
+        df["Kickoff"] = ""
+    else:
+        k = pd.to_datetime(df[kickoff_col], errors="coerce", utc=False)
+        df["Kickoff"] = k.dt.strftime("%b-%d-%Y, %H:%M").fillna("")
+
+    if "spread_home" not in df.columns:
+        df["spread_home"] = np.nan
+    df["Home Spread"] = df.apply(parse_home_spread, axis=1)
+    df["Home Spread"] = df["Home Spread"].apply(round_to_half)
+
+    if "model_home_line" in df.columns:
+        df["Model Home Line"] = coerce_numeric(df["model_home_line"]).apply(round_to_half)
+    else:
+        if "model_spread" in df.columns:
+            df["Model Home Line"] = (-coerce_numeric(df["model_spread"])).apply(round_to_half)
+        else:
+            df["Model Home Line"] = np.nan
+
+    if "model_line" in df.columns:
+        tmp_ml = coerce_numeric(df["model_line"]).apply(round_to_half)
+        df["Model Line (pts)"] = tmp_ml.where(~tmp_ml.isna(), df["Model Home Line"])
+    else:
+        df["Model Line (pts)"] = df["Model Home Line"]
+
+    if "edge_vs_market" in df.columns:
+        df["Edge (pts)"] = coerce_numeric(df["edge_vs_market"]).round(1)
+    else:
+        df["Edge (pts)"] = (
+            coerce_numeric(df["Model Home Line"]) - coerce_numeric(df["Home Spread"])
+        ).round(1)
+
+    home_cover_col = None
+    for c in ["home_cover_prob", "home_cover_prob_raw", "home_ats_prob", "home_spread_prob"]:
+        if c in df.columns:
+            home_cover_col = c
+            break
+    df["Home Cover %"] = coerce_numeric(df[home_cover_col]).apply(fmt_percentage_1dp) if home_cover_col else np.nan
+
+    ats_ev_col = None
+    for c in df.columns:
+        if "ats" in c.lower() and "ev" in c.lower():
+            ats_ev_col = c
+            break
+    df["ATS EV (%)"] = coerce_numeric(df[ats_ev_col]).apply(fmt_percentage_1dp).round(1) if ats_ev_col else np.nan
+
+    df["Units"] = coerce_numeric(df.get("units", np.nan)).round(1)
+
+    df["Pick Tier"] = series_or_default(df, "pick_tier", "")
+    if "pick" in df.columns:
+        df["Pick Team"] = series_or_default(df, "pick", "")
+    else:
+        df["Pick Team"] = series_or_default(df, "pick_team", "")
+
+    if "pick_price" in df.columns:
+        df["Pick Price"] = coerce_numeric(df["pick_price"]).round(0)
+    else:
+        mhml = coerce_numeric(series_or_default(df, "market_home_ml", np.nan))
+        maml = coerce_numeric(series_or_default(df, "market_away_ml", np.nan))
+        pick = series_or_default(df, "Pick Team", "")
+        home = series_or_default(df, "Home Team", "")
+        away = series_or_default(df, "Away Team", "")
+        vals = []
+        for p, h, a, hml, aml in zip(pick, home, away, mhml, maml):
+            if isinstance(p, str) and isinstance(h, str) and isinstance(a, str):
+                if p == h: vals.append(hml)
+                elif p == a: vals.append(aml)
+                else: vals.append(np.nan)
+            else:
+                vals.append(np.nan)
+        df["Pick Price"] = pd.to_numeric(pd.Series(vals, index=df.index), errors="coerce").round(0)
+
+    df["Market Home ML"] = coerce_numeric(df.get("market_home_ml", np.nan)).round(0)
+
+    out = df[REQUIRED_EXPORT_COLS].copy()
+    for c in ["Home Spread","Model Home Line","Model Line (pts)"]:
+        out[c] = pd.to_numeric(out[c], errors="coerce").apply(round_to_half)
+    for c in ["Edge (pts)","ATS EV (%)","Units","Pick Price","Market Home ML","Home Cover %"]:
+        out[c] = pd.to_numeric(out[c], errors="coerce")
+    return out
+
+def run_model():
+    completed = subprocess.run(
+        [sys.executable, "-m", "models.predict_upcoming_plus", "--fetch"],
+        cwd=str(APP_ROOT),
+        capture_output=True,
+        text=True,
+    )
+    return completed
+
+# ---------------- Controls: load/save ----------------
+def _csv_map(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    df = pd.read_csv(path)
+    d = {}
+    for _, r in df.iterrows():
+        d[str(r.get("key",""))] = r.get("value", "")
+    return d
+
+def _save_map(path: Path, d: dict):
+    if not d:
+        pd.DataFrame(columns=["key","value"]).to_csv(path, index=False)
+        return
+    pd.DataFrame([{"key":k, "value":v} for k, v in d.items()]).to_csv(path, index=False)
+
+def sidebar_sliders():
+    with st.sidebar:
+        st.subheader("Adjustments")
+
+        weights_map = _csv_map(WEIGHTS_CSV)
+        thresh_map  = _csv_map(THRESH_CSV)
+        toggles_map = _csv_map(TOGGLES_CSV)
+
+        with st.form("controls_form", clear_on_submit=False):
+            st.markdown("**Model Weights**")
+            w_trench = st.slider("Trench weight", 0.0, 1.5, float(weights_map.get("w_trench", 0.40)), 0.01)
+            w_qb     = st.slider("QB weight",     0.0, 1.5, float(weights_map.get("w_qb",     0.30)), 0.01)
+            w_rest   = st.slider("Rest weight",   0.0, 1.5, float(weights_map.get("w_rest",   0.15)), 0.01)
+            w_travel = st.slider("Travel weight", 0.0, 1.5, float(weights_map.get("w_travel", 0.05)), 0.01)
+            w_hfa    = st.slider("HFA weight",    0.0, 1.5, float(weights_map.get("w_hfa",    0.05)), 0.01)
+            w_inj    = st.slider("Injury cluster weight", 0.0, 1.5, float(weights_map.get("w_inj_cluster", 0.05)), 0.01)
+            meta_bl  = st.slider("Meta blend",    0.0, 1.0, float(weights_map.get("meta_blend", 0.60)), 0.01)
+
+            st.markdown("**Position Multipliers**")
+            pos_qb   = st.slider("QB multiplier",  0.0, 2.0, float(weights_map.get("pos_qb",  1.0)), 0.05)
+            pos_rb   = st.slider("RB multiplier",  0.0, 2.0, float(weights_map.get("pos_rb",  0.5)), 0.05)
+            pos_wr   = st.slider("WR multiplier",  0.0, 2.0, float(weights_map.get("pos_wr",  0.6)), 0.05)
+            pos_te   = st.slider("TE multiplier",  0.0, 2.0, float(weights_map.get("pos_te",  0.3)), 0.05)
+            pos_cb   = st.slider("CB multiplier",  0.0, 2.0, float(weights_map.get("pos_cb",  0.4)), 0.05)
+            pos_edge = st.slider("EDGE multiplier",0.0, 2.0, float(weights_map.get("pos_edge",0.5)), 0.05)
+            pos_ol   = st.slider("OL multiplier",  0.0, 2.0, float(weights_map.get("pos_ol",  0.4)), 0.05)
+
+            st.markdown("**Bet Sizing / Thresholds**")
+            kelly    = st.slider("Kelly fraction", 0.0, 1.0, float(thresh_map.get("kelly_fraction", 0.25)), 0.01)
+            maxu     = st.slider("Max units",      0.0, 10.0, float(thresh_map.get("max_units", 3.0)), 0.1)
+            dflt_px  = st.number_input("Default spread price (American)", value=float(thresh_map.get("default_spread_price", -110.0)), step=1.0, format="%.0f")
+
+            st.markdown("**EV / Edge Tiers**")
+            strong_ev = st.slider("Strong EV threshold (%)", 0.0, 20.0, float(thresh_map.get("strong_ev_threshold", 3.0)*100.0), 0.1)
+            strong_pts= st.slider("Strong edge threshold (pts)", 0.0, 10.0, float(thresh_map.get("strong_pts_threshold", 3.0)), 0.1)
+            lean_ev   = st.slider("Lean EV threshold (%)",   0.0, 20.0, float(thresh_map.get("lean_ev_threshold",   1.5)*100.0), 0.1)
+            lean_pts  = st.slider("Lean edge threshold (pts)",0.0, 10.0, float(thresh_map.get("lean_pts_threshold",  1.5)), 0.1)
+
+            submitted = st.form_submit_button("Save Controls", use_container_width=True)
+            if submitted:
+                weights_out = {
+                    "w_trench": w_trench, "w_qb": w_qb, "w_rest": w_rest, "w_travel": w_travel,
+                    "w_hfa": w_hfa, "w_inj_cluster": w_inj, "meta_blend": meta_bl,
+                    "pos_qb": pos_qb, "pos_rb": pos_rb, "pos_wr": pos_wr, "pos_te": pos_te,
+                    "pos_cb": pos_cb, "pos_edge": pos_edge, "pos_ol": pos_ol
+                }
+                pd.DataFrame([{"key":k, "value":v} for k, v in weights_out.items()]).to_csv(WEIGHTS_CSV, index=False)
+
+                thresh_out = {
+                    "kelly_fraction": kelly,
+                    "max_units": maxu,
+                    "default_spread_price": dflt_px,
+                    "strong_ev_threshold": strong_ev/100.0,
+                    "strong_pts_threshold": strong_pts,
+                    "lean_ev_threshold":   lean_ev/100.0,
+                    "lean_pts_threshold":  lean_pts,
+                }
+                pd.DataFrame([{"key":k, "value":v} for k, v in thresh_out.items()]).to_csv(THRESH_CSV, index=False)
+
+                if not TOGGLES_CSV.exists():
+                    pd.DataFrame(columns=["key","value"]).to_csv(TOGGLES_CSV, index=False)
+
+                st.success("Controls saved")
+                st.cache_data.clear()
+
+        st.divider()
+        if st.button("Run / Refresh Predictions", use_container_width=True):
+            with st.spinner("Running model..."):
+                res = run_model()
+            if res.returncode != 0:
+                st.error("Model run failed. See details below.")
+                with st.expander("Show stderr"):
+                    st.code(res.stderr)
+                with st.expander("Show stdout"):
+                    st.code(res.stdout)
+            else:
+                st.cache_data.clear()
+                st.success("Model completed. Reloading predictions...")
+                st.rerun()
+
+        if st.button("Reload Table Only", use_container_width=True):
+            st.cache_data.clear()
+            st.rerun()
+
+# ---------------- UI ----------------
+st.title("Streamlit NFL Model — fresh session (kept context)")
+sidebar_sliders()
+
+# Load CSV and build display frame
+raw_df = load_csv(PRED_CSV)
+if raw_df.empty:
+    st.info("No predictions found yet. Use the sidebar to **Save Controls** (if needed) and click **Run / Refresh Predictions**.")
+    st.stop()
+
+display_df = build_display_df(raw_df)
+
+# Strict column_config
+col_cfg = {
+    "Home Team": st.column_config.TextColumn("Home Team", width="medium"),
+    "Away Team": st.column_config.TextColumn("Away Team", width="medium"),
+    "Kickoff":   st.column_config.TextColumn("Kickoff", width="medium"),
+    "Home Spread":     st.column_config.NumberColumn("Home Spread", format="%.1f", width="small"),
+    "Model Home Line": st.column_config.NumberColumn("Model Home Line", format="%.1f", width="small"),
+    "Model Line (pts)":st.column_config.NumberColumn("Model Line (pts)", format="%.1f", width="small"),
+    "Home Cover %": st.column_config.NumberColumn("Home Cover %", format="%.1f%%", width="small"),
+    "ATS EV (%)":   st.column_config.NumberColumn("ATS EV (%)",   format="%.1f%%", width="small"),
+    "Edge (pts)":     st.column_config.NumberColumn("Edge (pts)", format="%.1f", width="small"),
+    "Units":          st.column_config.NumberColumn("Units",      format="%.1f", width="small"),
+    "Pick Price":     st.column_config.NumberColumn("Pick Price", format="%.0f", width="small"),
+    "Market Home ML": st.column_config.NumberColumn("Market Home ML", format="%.0f", width="small"),
+    "Pick Tier": st.column_config.TextColumn("Pick Tier", width="small"),
+    "Pick Team": st.column_config.TextColumn("Pick Team", width="medium"),
 }
 
-# ---------------- State helpers ----------------
-def _init_state():
-    if "toggles" not in st.session_state:
-        st.session_state.toggles = {k: d for (k, _, d) in TOGGLE_DEFS}
-    if "thresholds" not in st.session_state:
-        st.session_state.thresholds = {k: d for (k, _, d, _) in THRESH_DEFS}
-    if "weights" not in st.session_state:
-        st.session_state.weights = {k: d for (k, _, d, _) in WEIGHT_DEFS}
+# Optional debug panel
+with st.expander("Debug: data pipeline (temporary)"):
+    st.write({"PRED_CSV": str(PRED_CSV)})
+    try:
+        import time
+        exists = PRED_CSV.exists()
+        size = PRED_CSV.stat().st_size if exists else 0
+        mtime = time.ctime(PRED_CSV.stat().st_mtime) if exists else "n/a"
+        st.write({"exists": exists, "size_bytes": size, "last_modified": mtime})
+    except Exception as e:
+        st.write({"stat_error": str(e)})
+    st.write({"raw_df_shape": raw_df.shape})
+    st.write({"raw_df_columns": list(raw_df.columns)})
+    st.dataframe(raw_df.head(25), use_container_width=True, hide_index=True)
 
-def _apply_preset(preset_name: str):
-    pre = AGG_PRESETS.get(preset_name, {})
-    for k, v in pre.get("thresholds", {}).items():
-        if k in st.session_state.thresholds:
-            st.session_state.thresholds[k] = float(v)
-    for k, v in pre.get("weights", {}).items():
-        if k in st.session_state.weights:
-            st.session_state.weights[k] = float(v)
-
-def _save_controls_to_csv():
-    t_rows = [{"key": k, "label": next(lbl for (kk, lbl, _) in TOGGLE_DEFS if kk==k), "value": v, "help": ""} for k, v in st.session_state.toggles.items()]
-    th_rows= [{"key": k, "label": next(lbl for (kk, lbl, _, _) in THRESH_DEFS if kk==k), "value": st.session_state.thresholds[k],
-               "min": rng[0], "max": rng[1], "step": "", "help": ""} for (k, _, __, rng) in THRESH_DEFS]
-    w_rows = [{"key": k, "label": next(lbl for (kk, lbl, _, _) in WEIGHT_DEFS if kk==k), "value": st.session_state.weights[k],
-               "min": rng[0], "max": rng[1], "step": "", "help": ""} for (k, _, __, rng) in WEIGHT_DEFS]
-    pd.DataFrame(t_rows).to_csv(TOGGLES_CSV, index=False)
-    pd.DataFrame(th_rows).to_csv(THRESH_CSV,  index=False)
-    pd.DataFrame(w_rows).to_csv(WEIGHTS_CSV, index=False)
-
-# ---------------- UI renderers ----------------
-def render_toggle_group():
-    st.subheader("Toggles")
-    cols = st.columns(3)
-    for i, (key, label, default) in enumerate(TOGGLE_DEFS):
-        with cols[i % 3]:
-            st.session_state.toggles[key] = st.checkbox(label, value=st.session_state.toggles[key])
-
-def render_threshold_sliders():
-    st.subheader("Thresholds & Sizing")
-    for (key, label, default, (lo, hi)) in THRESH_DEFS:
-        st.session_state.thresholds[key] = st.slider(
-            label, min_value=float(lo), max_value=float(hi),
-            value=float(st.session_state.thresholds[key])
-        )
-
-def render_weight_sliders():
-    st.subheader("Weights")
-    cols = st.columns(2)
-    for i, (key, label, default, (lo, hi)) in enumerate(WEIGHT_DEFS):
-        with cols[i % 2]:
-            st.session_state.weights[key] = st.slider(
-                label, min_value=float(lo), max_value=float(hi),
-                value=float(st.session_state.weights[key])
-            )
-
-# ---------------- App ----------------
-st.set_page_config(page_title="NFL Model Dashboard", layout="wide")
-st.title("🏈 NFL Prediction Model Dashboard")
-
-import datetime as _dt
-st.markdown(f"**UI mode:** SLIDERS ONLY · build { _dt.datetime.now():%Y-%m-%d %H:%M:%S }")
-
-_init_state()
-
-tab_picks, tab_backtest = st.tabs(["📈 Picks", "📊 Backtest"])
-
-# ==== PICKS TAB ====
-with tab_picks:
-    st.sidebar.header("Run Controls (Picks)")
-    preset_choice = st.sidebar.selectbox(
-        "Model aggressiveness (preset)",
-        ["Conservative", "Balanced", "Aggressive"], index=1,
-        help="Preset updates sliders instantly; you can still tweak after."
-    )
-    if st.sidebar.button(f"Apply '{preset_choice}' Preset"):
-        _apply_preset(preset_choice)
-        st.success(f"Applied {preset_choice} preset.")
-
-    fetch_markets = st.sidebar.toggle("Fetch fresh markets", value=True)
-    run_picks     = st.sidebar.button("🔁 Save Controls & Recompute (Picks)")
-
-    render_toggle_group()
-    render_threshold_sliders()
-    render_weight_sliders()
-
-    if run_picks:
-        _save_controls_to_csv()
-        st.info("Running model…")
-        cmd = [sys.executable, "-m", "models.predict_upcoming_plus"]
-        if fetch_markets:
-            cmd.append("--fetch")
-        try:
-            completed = subprocess.run(cmd, cwd=str(ROOT), check=True, capture_output=True, text=True)
-            st.toast("Picks complete.", icon="✅")
-            with st.expander("Run log"):
-                st.code(completed.stdout + "\n" + completed.stderr)
-        except subprocess.CalledProcessError as e:
-            st.error("Model run failed.")
-            st.exception(e)
-
-    st.subheader("Spread Model Picks")
-    if not PRED_FILE.exists():
-        st.warning("No predictions yet. Click **Save Controls & Recompute (Picks)**.")
-    else:
-        preds = pd.read_csv(PRED_FILE)
-        fmt = {
-            "spread_home": "{:.1f}",
-            "model_home_line": "{:.2f}",
-            "home_cover_prob": "{:.3f}",
-            "market_line_pts": "{:.1f}",
-            "model_line_pts": "{:.2f}",
-            "value_pts": "{:.2f}",
-            "ats_ev": "{:.2f}",
-            "units": "{:.2f}",
-        }
-        st.dataframe(preds.style.format(fmt), use_container_width=True, hide_index=True)
-
-# ==== BACKTEST TAB ====
-with tab_backtest:
-    st.sidebar.header("Run Controls (Backtest)")
-    season_input = st.sidebar.text_input("Seasons (e.g., 2018-2024 or 2022,2023,2024)", value="2022-2024")
-    line_source  = st.sidebar.selectbox("Line source", ["closing", "open", "best_of"], index=0)
-    only_tiered  = st.sidebar.checkbox("Only count LEAN/STRONG bets", value=True)
-    fetch_needed = st.sidebar.toggle("Fetch new metrics (if wired)", value=False)
-    run_bt       = st.sidebar.button("🔁 Save Controls & Run Backtest")
-
-    st.subheader("Backtest Input")
-    st.markdown(
-        "Upload a historical CSV with columns: "
-        "`season,week,commence_time,team_home,team_away,home_score,away_score,spread_home` "
-        "and optional: prices `market_home_spread_price, market_away_spread_price`, "
-        "alternate lines `spread_home_open, spread_home_closing, spread_home_best_of`."
-    )
-    file = st.file_uploader("Upload backtest_input.csv", type=["csv"])
-    if file is not None:
-        df_up = pd.read_csv(file)
-        df_up.to_csv(BT_INPUT_CSV, index=False)
-        st.success(f"Uploaded → {BT_INPUT_CSV.name} ({len(df_up)} rows).")
-
-    if BT_INPUT_CSV.exists():
-        st.dataframe(pd.read_csv(BT_INPUT_CSV).head(12), use_container_width=True)
-    else:
-        st.info("No backtest input found. Upload above.")
-
-    if run_bt:
-        _save_controls_to_csv()  # ensures backtest uses current sliders/toggles/weights
-        st.info("Running backtest…")
-        cmd = [
-            sys.executable, "-m", "models.backtest",
-            "--seasons", season_input,
-            "--line_source", line_source,
-        ]
-        if only_tiered:
-            cmd.append("--only_tiered")
-        if fetch_needed:
-            cmd.append("--fetch")
-        try:
-            completed = subprocess.run(cmd, cwd=str(ROOT), check=True, capture_output=True, text=True)
-            st.toast("Backtest complete.", icon="✅")
-            with st.expander("Backtest log"):
-                st.code(completed.stdout + "\n" + completed.stderr)
-        except subprocess.CalledProcessError as e:
-            st.error("Backtest run failed.")
-            st.exception(e)
-
-    st.subheader("Backtest Results")
-    if BT_SUMMARY_JSON.exists():
-        try:
-            summary = json.loads(BT_SUMMARY_JSON.read_text(encoding="utf-8"))
-            c1, c2, c3, c4, c5 = st.columns(5)
-            c1.metric("Bets",        f"{summary.get('bets', 0):,}")
-            c2.metric("Win %",       f"{100*summary.get('win_rate', 0):.1f}%")
-            c3.metric("ROI",         f"{100*summary.get('roi', 0):.2f}%")
-            c4.metric("Avg CLV (pt)",f"{summary.get('avg_clv_pts', 0):.2f}")
-            c5.metric("Max Drawdown",f"{100*summary.get('max_drawdown', 0):.1f}%")
-        except Exception:
-            st.warning("Summary present but could not be parsed.")
-
-    if BT_RESULTS_CSV.exists():
-        bt = pd.read_csv(BT_RESULTS_CSV)
-        fmt = {
-            "spread_home": "{:.1f}",
-            "model_home_line": "{:.2f}",
-            "home_cover_prob": "{:.3f}",
-            "market_line_pts": "{:.1f}",
-            "model_line_pts": "{:.2f}",
-            "value_pts": "{:.2f}",
-            "roi": "{:.3f}",
-            "units": "{:.2f}",
-            "clv_pts": "{:.2f}",
-        }
-        st.dataframe(bt.head(500).style.format(fmt), use_container_width=True, hide_index=True)
-        st.download_button(
-            "Download full backtest results CSV",
-            bt.to_csv(index=False).encode("utf-8"),
-            file_name="backtest_results.csv"
-        )
-    else:
-        st.info("Run a backtest to see results here.")
+# Final table
+st.dataframe(
+    display_df,
+    use_container_width=True,
+    hide_index=True,
+    column_config=col_cfg,
+)

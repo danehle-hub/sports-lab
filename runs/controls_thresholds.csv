@@ -1,9 +1,8 @@
-key,label,value,min,max,step,help
-kelly_fraction,Kelly fraction,0.13,0.0,1.0,,
-max_units,Max units per play,4.81,0.0,10.0,,
-default_spread_price,Default spread price (American),-110.0,-500.0,500.0,,
-strong_ev_threshold,STRONG EV threshold,0.03,0.0,0.2,,
-strong_pts_threshold,STRONG points threshold,3.82,0.0,10.0,,
-lean_ev_threshold,LEAN EV threshold,0.08,0.0,0.2,,
-lean_pts_threshold,LEAN points threshold,6.11,0.0,10.0,,
-ats_sigma,"ATS sigma (spread SD, pts)",13.5,8.0,20.0,,
+key,value
+kelly_fraction,0.25
+max_units,3.0
+default_spread_price,-110.0
+strong_ev_threshold,0.03
+strong_pts_threshold,3.0
+lean_ev_threshold,0.0125
+lean_pts_threshold,1.5
